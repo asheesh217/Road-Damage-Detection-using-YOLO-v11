@@ -166,7 +166,11 @@ const ManagementDashboard = () => {
                                             )}
                                         </div>
                                     </td>
-                                    <td className="col-date">{new Date(report.created_at).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}</td>
+                                    <td className="col-date">
+                                        {new Date(report.created_at).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) +
+                                            ' at ' +
+                                            new Date(report.created_at).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true })}
+                                    </td>
                                     <td className="col-issues">{report.damage_type}</td>
                                     <td className="col-severity">
                                         <span className={`badge ${getSeverityClass(report.severity)}`}>
@@ -255,7 +259,9 @@ const ManagementDashboard = () => {
                             <div className="modal-title-section">
                                 <h3 className="modal-title">Report #{selectedReport.id}</h3>
                                 <span className="modal-date">
-                                    {new Date(selectedReport.created_at).toLocaleDateString('en-IN', { weekday: 'long', day: '2-digit', month: 'long', year: 'numeric' })}
+                                    {new Date(selectedReport.created_at).toLocaleDateString('en-IN', { weekday: 'long', day: '2-digit', month: 'long', year: 'numeric' }) +
+                                        ' at ' +
+                                        new Date(selectedReport.created_at).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true })}
                                 </span>
                             </div>
                             <span className={`badge badge-lg ${getSeverityClass(selectedReport.severity)}`}>
@@ -337,6 +343,14 @@ const ManagementDashboard = () => {
                                         <span className="detail-value font-mono">{selectedReport.longitude}</span>
                                     </div>
                                 </div>
+
+                                {/* Strategic Advisory Note */}
+                                {selectedReport.advisory_note && (
+                                    <div className="advisory-box">
+                                        <span className="advisory-label">💡 Strategic Advisory</span>
+                                        <p className="advisory-text">{selectedReport.advisory_note}</p>
+                                    </div>
+                                )}
 
                                 {/* Storage Info */}
                                 <div className="storage-info">

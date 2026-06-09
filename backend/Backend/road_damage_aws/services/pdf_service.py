@@ -7,7 +7,16 @@ import io
 import json
 import os
 import requests as http_requests
-from datetime import datetime
+from datetime import datetime, timezone
+
+def _local_time(dt):
+    """Convert UTC naive/aware datetime to local system timezone."""
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc).astimezone()
+    return dt.astimezone()
+from PIL import Image as PILImage
 
 from reportlab.lib.pagesizes import A4
 from reportlab.lib import colors
@@ -57,23 +66,42 @@ def _get_styles():
     }
 
 
+def _compress_image_data(img_input, max_size=(640, 480)):
+    """Resizes and compresses image to reduce PDF size."""
+    try:
+        img = PILImage.open(img_input)
+        img.thumbnail(max_size, PILImage.Resampling.LANCZOS)
+        out_buf = io.BytesIO()
+        if img.mode in ('RGBA', 'LA', 'P'):
+            img = img.convert('RGB')
+        img.save(out_buf, format="JPEG", quality=75, optimize=True)
+        out_buf.seek(0)
+        return out_buf
+    except Exception as e:
+        print(f"Error compressing image: {e}")
+        return img_input
+
+
 def _fetch_image_data(url):
-    """Fetch image from S3 URL or local path, return BytesIO or path."""
+    """Fetch image from S3 URL or local path, compress it in-memory, and return BytesIO."""
     if not url:
         return None
     if url.startswith("http"):
         try:
             resp = http_requests.get(url, timeout=15)
             resp.raise_for_status()
-            return io.BytesIO(resp.content)
-        except Exception:
+            return _compress_image_data(io.BytesIO(resp.content))
+        except Exception as e:
+            print(f"Error fetching image from S3: {e}")
             return None
     else:
         base = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         # Strip leading slash for cross-platform compatibility
         cleaned = url.lstrip("/").lstrip("\\")
         local_path = os.path.normpath(os.path.join(base, cleaned))
-        return local_path if os.path.exists(local_path) else None
+        if os.path.exists(local_path):
+            return _compress_image_data(local_path)
+        return None
 
 
 def _build_branded_header(report, st):
@@ -83,7 +111,7 @@ def _build_branded_header(report, st):
         Paragraph(f"REPORT #{report.id}", ParagraphStyle('BrandId', parent=st['title'], fontSize=14, textColor=BRAND_CYAN, alignment=TA_RIGHT))
     ], [
         Paragraph("Road Damage Detection &amp; Analysis Report", ParagraphStyle('BrandTag', parent=st['subtitle'], textColor=colors.HexColor('#cbd5e1'))),
-        Paragraph(report.created_at.strftime('%B %d, %Y &mdash; %I:%M %p'), ParagraphStyle('BrandDate', parent=st['subtitle'], textColor=colors.HexColor('#94a3b8'), alignment=TA_RIGHT))
+        Paragraph(_local_time(report.created_at).strftime('%B %d, %Y &mdash; %I:%M %p'), ParagraphStyle('BrandDate', parent=st['subtitle'], textColor=colors.HexColor('#94a3b8'), alignment=TA_RIGHT))
     ]]
     header = Table(header_data, colWidths=[320, 150])
     header.setStyle(TableStyle([
@@ -227,7 +255,7 @@ def _build_detection_table(report, detections, st):
         ["Confidence", f"{round(report.confidence * 100, 1)}%"],
         ["Objects Detected", str(len(detections))],
         ["Coordinates", f"{report.latitude}, {report.longitude}"],
-        ["Scan Date", report.created_at.strftime('%Y-%m-%d %H:%M:%S')],
+        ["Scan Date", _local_time(report.created_at).strftime('%Y-%m-%d %H:%M:%S')],
         ["Image Storage", "AWS S3" if report.image_url and report.image_url.startswith("http") else "Local"],
     ]
     tbl = Table(data, colWidths=[150, 320])
@@ -369,6 +397,29 @@ def _build_recommendations(report, st):
             ParagraphStyle(f'Rec{i}', parent=st['body'], spaceBefore=3, spaceAfter=3, leftIndent=12)
         ))
 
+    # Fetch advisory note from Pydantic computed field
+    from schemas import RoadDamageOut
+    try:
+        pyd_report = RoadDamageOut.model_validate(report)
+        adv_text = f"<b>Strategic Advisory:</b> {pyd_report.advisory_note}"
+    except Exception as e:
+        print(f"Error validating report for advisory: {e}")
+        adv_text = "<b>Strategic Advisory:</b> Monitor road surface condition regularly."
+    
+    elements.append(Spacer(1, 8))
+    elements.append(Paragraph(
+        adv_text,
+        ParagraphStyle(
+            'StrategicAdvise',
+            parent=st['body_sm'],
+            textColor=colors.HexColor('#0284c7'),
+            backColor=colors.HexColor('#f0f9ff'),
+            borderPadding=8,
+            borderWidth=0.5,
+            borderColor=colors.HexColor('#bae6fd')
+        )
+    ))
+
     return elements
 
 
@@ -502,7 +553,7 @@ def generate_video_report_pdf(report) -> io.BytesIO:
         Paragraph(f"VIDEO REPORT #{report.id}", ParagraphStyle('VBrandId', parent=st['title'], fontSize=14, textColor=BRAND_CYAN, alignment=TA_RIGHT))
     ], [
         Paragraph("Video Analysis Report", ParagraphStyle('VTag', parent=st['subtitle'], textColor=colors.HexColor('#cbd5e1'))),
-        Paragraph(report.created_at.strftime('%B %d, %Y &mdash; %I:%M %p'), ParagraphStyle('VDate', parent=st['subtitle'], textColor=colors.HexColor('#94a3b8'), alignment=TA_RIGHT))
+        Paragraph(_local_time(report.created_at).strftime('%B %d, %Y &mdash; %I:%M %p'), ParagraphStyle('VDate', parent=st['subtitle'], textColor=colors.HexColor('#94a3b8'), alignment=TA_RIGHT))
     ]]
     header = Table(header_data, colWidths=[320, 150])
     header.setStyle(TableStyle([
@@ -617,6 +668,29 @@ def generate_video_report_pdf(report) -> io.BytesIO:
             f"<font color='{sev_color.hexval()}'><b>{i}.</b></font> {item}",
             ParagraphStyle(f'VRec{i}', parent=st['body'], spaceBefore=3, spaceAfter=3, leftIndent=12)
         ))
+
+    # Fetch advisory note from Pydantic computed field
+    from schemas import VideoReportOut
+    try:
+        pyd_report = VideoReportOut.model_validate(report)
+        adv_text = f"<b>Strategic Advisory:</b> {pyd_report.advisory_note}"
+    except Exception as e:
+        print(f"Error validating video report for advisory: {e}")
+        adv_text = "<b>Strategic Advisory:</b> Monitor road segment condition regularly."
+    
+    elements.append(Spacer(1, 8))
+    elements.append(Paragraph(
+        adv_text,
+        ParagraphStyle(
+            'VStrategicAdvise',
+            parent=st['body_sm'],
+            textColor=colors.HexColor('#0284c7'),
+            backColor=colors.HexColor('#f0f9ff'),
+            borderPadding=8,
+            borderWidth=0.5,
+            borderColor=colors.HexColor('#bae6fd')
+        )
+    ))
 
     # 7. Closing
     elements.append(Spacer(1, 16))

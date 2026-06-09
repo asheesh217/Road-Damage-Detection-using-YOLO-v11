@@ -110,7 +110,7 @@ const Sidebar = ({ isConnected, darkMode, toggleDarkMode }) => {
                 </div>
                 <div>
                     <h1 className="text-[15px] font-extrabold text-slate-800 dark:text-white tracking-tight group-hover:text-blue-500 dark:group-hover:text-blue-400 transition-colors duration-200">StreetScan <span className="text-cyan-500">AI</span></h1>
-                    <span className="text-[9px] text-slate-400 font-mono tracking-wider">v11.0.1</span>
+                    <span className="text-[9px] text-slate-400 font-mono tracking-wider">v3.5</span>
                 </div>
             </Link>
 

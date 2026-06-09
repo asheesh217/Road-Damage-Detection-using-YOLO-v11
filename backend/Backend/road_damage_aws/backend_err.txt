@@ -1,4 +1,0 @@
-Traceback (most recent call last):
-  File "D:\RoadAI\MajorProject-main\MajorProject-main\backend\Backend\road_damage_aws\routers\damage.py", line 44, in create_damage_report
-    raise HTTPException(status_code=400, detail="File too large. Maximum size is 5MB.")
-fastapi.exceptions.HTTPException: 400: File too large. Maximum size is 5MB.

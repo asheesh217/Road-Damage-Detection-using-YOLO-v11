@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { AlertTriangle, CheckCircle, Download, Upload } from 'lucide-react';
 
 const VideoTimeline = ({ results, onReset }) => {
-    const { frames_scanned, damage_frames, worst_severity, peak_confidence, timeline } = results;
+    const { frames_scanned, duration_seconds, damage_frames, worst_severity, peak_confidence, timeline } = results;
     
     // Default to the first frame with damage, or 0 if none
     const firstDamageFrameIdx = timeline?.findIndex(f => f.detected_issues.length > 0) || 0;
@@ -31,7 +31,9 @@ const VideoTimeline = ({ results, onReset }) => {
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
                 <div className="glass-panel p-4 flex flex-col items-center justify-center border border-slate-200">
                     <p className="text-[10px] text-slate-500 tracking-wider uppercase mb-2">Seconds Analyzed</p>
-                    <p className="text-3xl font-bold text-accent-blue">{frames_scanned}</p>
+                    <p className="text-3xl font-bold text-accent-blue">
+                        {duration_seconds !== undefined && duration_seconds !== null ? `${duration_seconds}s` : `${(frames_scanned / 5).toFixed(1)}s`}
+                    </p>
                 </div>
                 <div className="glass-panel p-4 flex flex-col items-center justify-center border border-slate-200">
                     <p className="text-[10px] text-slate-500 tracking-wider uppercase mb-2">Damage Found</p>

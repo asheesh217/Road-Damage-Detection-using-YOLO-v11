@@ -1,6 +1,6 @@
 import os
 import io
-from PIL import Image
+from PIL import Image, ImageOps
 from fastapi import UploadFile
 from dotenv import load_dotenv
 from ultralytics import YOLO
@@ -43,16 +43,17 @@ async def analyze_image_with_ai(file: UploadFile):
         return default_result
 
     try:
-        # Load image via PIL and convert to RGB
-        img = Image.open(io.BytesIO(file_content)).convert("RGB")
+        # Load image via PIL, apply EXIF transposition, and convert to RGB
+        raw_img = Image.open(io.BytesIO(file_content))
+        img = ImageOps.exif_transpose(raw_img).convert("RGB")
         img_width, img_height = img.size
         
-        results = model(img, conf=0.15, imgsz=1280)
+        # Run YOLO inference at resolution 640 and confidence 0.1 for single images
+        results = model(img, conf=0.1, imgsz=640)
         
         detected_issues = []
-        highest_conf = 0.0
-        primary_damage = "None"
-        primary_severity = "None"
+        has_pothole = False
+        pothole_highest_conf = 0.0
         
         for r in results:
             boxes = r.boxes
@@ -71,7 +72,15 @@ async def analyze_image_with_ai(file: UploadFile):
                 bbox_area = w * h
                 img_area = img_width * img_height
                 relative_area = (bbox_area / img_area) * 100 if img_area > 0 else 0
-                severity = calculate_severity(conf, relative_area)
+                
+                # Potholes are always High severity (priority fix) regardless of confidence/area
+                if issue_type == "Pothole":
+                    severity = "High"
+                    has_pothole = True
+                    if conf > pothole_highest_conf:
+                        pothole_highest_conf = conf
+                else:
+                    severity = calculate_severity(conf, relative_area)
                 
                 # Convert bbox coordinates to percentages for the frontend
                 x_pct = (x1 / img_width) * 100
@@ -85,11 +94,22 @@ async def analyze_image_with_ai(file: UploadFile):
                     "confidence": conf,
                     "bbox": [x_pct, y_pct, w_pct, h_pct]
                 })
-                
-                if conf > highest_conf:
-                    highest_conf = conf
-                    primary_damage = issue_type
-                    primary_severity = severity
+
+        # Determine primary damage and severity (Potholes take priority)
+        highest_conf = 0.0
+        primary_damage = "None"
+        primary_severity = "None"
+
+        if has_pothole:
+            primary_damage = "Pothole"
+            primary_severity = "High"
+            highest_conf = pothole_highest_conf
+        else:
+            for issue in detected_issues:
+                if issue["confidence"] > highest_conf:
+                    highest_conf = issue["confidence"]
+                    primary_damage = issue["type"]
+                    primary_severity = issue["severity"]
 
         # Generate YOLO-annotated image with native bounding boxes
         annotated_image_bytes = None
@@ -157,9 +177,8 @@ def analyze_frame_with_ai(img) -> dict:
     try:
         results = model(img, conf=0.15, imgsz=640)
         detected_issues = []
-        highest_conf = 0.0
-        primary_damage = "None"
-        primary_severity = "None"
+        has_pothole = False
+        pothole_highest_conf = 0.0
         
         for r in results:
             boxes = r.boxes
@@ -175,7 +194,15 @@ def analyze_frame_with_ai(img) -> dict:
                 bbox_area = w * h
                 img_area = img_width * img_height
                 relative_area = (bbox_area / img_area) * 100 if img_area > 0 else 0
-                severity = calculate_severity(conf, relative_area)
+                
+                # Potholes are always High severity (priority fix) regardless of confidence/area
+                if issue_type == "Pothole":
+                    severity = "High"
+                    has_pothole = True
+                    if conf > pothole_highest_conf:
+                        pothole_highest_conf = conf
+                else:
+                    severity = calculate_severity(conf, relative_area)
                 
                 # Convert bbox coordinates to percentages for the frontend
                 x_pct = (x1 / img_width) * 100
@@ -189,11 +216,22 @@ def analyze_frame_with_ai(img) -> dict:
                     "confidence": conf,
                     "bbox": [x_pct, y_pct, w_pct, h_pct]
                 })
-                
-                if conf > highest_conf:
-                    highest_conf = conf
-                    primary_damage = issue_type
-                    primary_severity = severity
+
+        # Determine primary damage and severity (Potholes take priority)
+        highest_conf = 0.0
+        primary_damage = "None"
+        primary_severity = "None"
+
+        if has_pothole:
+            primary_damage = "Pothole"
+            primary_severity = "High"
+            highest_conf = pothole_highest_conf
+        else:
+            for issue in detected_issues:
+                if issue["confidence"] > highest_conf:
+                    highest_conf = issue["confidence"]
+                    primary_damage = issue["type"]
+                    primary_severity = issue["severity"]
                     
         if not detected_issues:
             return default_result

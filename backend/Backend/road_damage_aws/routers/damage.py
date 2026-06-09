@@ -129,9 +129,29 @@ def get_report_by_id(report_id: int, db: Session = Depends(get_db)):
         
     return report
 
+def _compress_download_image(image_source, max_size=(1280, 960), quality=75):
+    """Resizes and compresses image for download to save bandwidth and storage."""
+    from PIL import Image as PILImage
+    import io
+    try:
+        img = PILImage.open(image_source)
+        img.thumbnail(max_size, PILImage.Resampling.LANCZOS)
+        out_buf = io.BytesIO()
+        if img.mode in ('RGBA', 'LA', 'P'):
+            img = img.convert('RGB')
+        img.save(out_buf, format="JPEG", quality=quality, optimize=True)
+        out_buf.seek(0)
+        return out_buf
+    except Exception as e:
+        print(f"Error compressing download image: {e}")
+        if isinstance(image_source, io.BytesIO):
+            image_source.seek(0)
+            return image_source
+        return None
+
 @router.get("/{report_id}/download-image")
 def download_report_image(report_id: int, db: Session = Depends(get_db)):
-    """Download the original image from S3 or local storage."""
+    """Download the original image from S3 or local storage, compressed for efficiency."""
     import requests as http_requests
     from fastapi.responses import StreamingResponse
     import io
@@ -140,23 +160,25 @@ def download_report_image(report_id: int, db: Session = Depends(get_db)):
     if not report:
         raise HTTPException(status_code=404, detail="Report not found")
 
-    image_url = report.image_url
+    # Prioritize annotated image (with bounding boxes) over original image
+    image_url = report.annotated_image_url or report.image_url
 
     # If it's an S3 URL, fetch from S3
     if image_url.startswith("http"):
         try:
             resp = http_requests.get(image_url, timeout=15)
             resp.raise_for_status()
-            content_type = resp.headers.get("Content-Type", "image/jpeg")
-            ext = "jpg" if "jpeg" in content_type or "jpg" in content_type else "png"
-            filename = f"road_damage_report_{report_id}.{ext}"
+            
+            # Compress the image bytes
+            compressed_buf = _compress_download_image(io.BytesIO(resp.content))
+            filename = f"road_damage_report_{report_id}.jpg"
             return StreamingResponse(
-                io.BytesIO(resp.content),
-                media_type=content_type,
+                compressed_buf,
+                media_type="image/jpeg",
                 headers={"Content-Disposition": f'attachment; filename="{filename}"'}
             )
         except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Failed to fetch image from S3: {str(e)}")
+            raise HTTPException(status_code=500, detail=f"Failed to fetch or compress image from S3: {str(e)}")
     else:
         # Local file — strip leading slashes for cross-platform compatibility
         cleaned = image_url.lstrip("/").lstrip("\\")
@@ -164,14 +186,29 @@ def download_report_image(report_id: int, db: Session = Depends(get_db)):
         local_path = os.path.normpath(local_path)
         if not os.path.exists(local_path):
             raise HTTPException(status_code=404, detail="Image file not found on server")
-        ext = local_path.rsplit(".", 1)[-1] if "." in local_path else "jpg"
-        from fastapi.responses import FileResponse
-        return FileResponse(
-            local_path,
-            media_type=f"image/{ext}",
-            filename=f"road_damage_report_{report_id}.{ext}",
-            headers={"Content-Disposition": f'attachment; filename="road_damage_report_{report_id}.{ext}"'}
-        )
+        
+        try:
+            compressed_buf = _compress_download_image(local_path)
+            if compressed_buf is None:
+                # Fallback to original local file if compression fails
+                from fastapi.responses import FileResponse
+                ext = local_path.rsplit(".", 1)[-1] if "." in local_path else "jpg"
+                return FileResponse(
+                    local_path,
+                    media_type=f"image/{ext}",
+                    filename=f"road_damage_report_{report_id}.{ext}",
+                    headers={"Content-Disposition": f'attachment; filename="road_damage_report_{report_id}.{ext}"'}
+                )
+            
+            filename = f"road_damage_report_{report_id}.jpg"
+            return StreamingResponse(
+                compressed_buf,
+                media_type="image/jpeg",
+                headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+            )
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to process or compress local image: {str(e)}")
+
 
 
 @router.get("/{report_id}/download-pdf")
@@ -215,6 +252,7 @@ def _process_video_sync(temp_file_path: str) -> dict:
         best_frame_conf = 0.0
         
         current_frame = 0
+        timestamp = 0.0
         while True:
             if isinstance(total_frames, (int, float)) and total_frames != float('inf'):
                 if current_frame >= total_frames:
@@ -286,6 +324,7 @@ def _process_video_sync(temp_file_path: str) -> dict:
                 print(f"Best frame capture error: {e}")
             
         return {
+            "duration_seconds": round(timestamp, 2),
             "frames_scanned": frames_scanned,
             "damage_frames": damage_frames,
             "worst_severity": worst_severity if damage_frames > 0 else "None",
